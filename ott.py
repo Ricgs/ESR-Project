@@ -5,7 +5,6 @@ import time
 
 neighbors_list = []
 
-
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -43,10 +42,14 @@ def server_thread(port):
 
 
 def connect_to_neighbors(neighbors, retry_interval=5):
+    global neighbors_list
     while True:
         for neighbor in neighbors:
             ip, port = neighbor.split(':')
             port = int(port)
+            # Verifica se já existe uma ligação ativa com este vizinho
+            if any(n['ip'] == ip and n['port'] == port for n in neighbors_list):
+                continue  # ← Adicionado: evita duplicar ligações
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(3)
@@ -55,10 +58,20 @@ def connect_to_neighbors(neighbors, retry_interval=5):
                 s.sendall(f"HELLO from {get_local_ip()}".encode())
                 data = s.recv(1024)
                 print(f"[CLIENT] Resposta de {ip}:{port}: {data.decode()}")
-                s.close()
+                neighbors_list.append({'ip': ip, 'port': port, 'socket': s})
             except Exception as e:
                 print(f"[CLIENT] Falha ao ligar a {ip}:{port} ({e}). Nova tentativa em {retry_interval}s.")
-        time.sleep(retry_interval)
+        
+        # Monitoriza as ligações e remove as que quebraram
+        for n in neighbors_list[:]:  # ← Adicionado: verificar estado das ligações
+            try:
+                n['socket'].sendall(b"PING")  # Mensagem keep-alive
+            except Exception:
+                print(f"[CLIENT] Ligação perdida com {n['ip']}:{n['port']}")
+                n['socket'].close()
+                neighbors_list.remove(n)
+
+        time.sleep(retry_interval)  # Espera antes de nova ronda
 
 
 if __name__ == "__main__":
@@ -85,3 +98,5 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n[SYSTEM] Encerrado pelo utilizador.")
+        for n in neighbors_list:
+            n['socket'].close()
